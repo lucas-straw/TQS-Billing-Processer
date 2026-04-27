@@ -148,12 +148,37 @@
   .db-bar.err{background:rgba(200,75,47,.07);border:1px solid rgba(200,75,47,.2);color:var(--red)}
   .db-spin{width:11px;height:11px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
   @keyframes spin{to{transform:rotate(360deg)}}
+  .ver-btn{margin-left:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#bbb;font-family:'DM Mono',monospace;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer;letter-spacing:.4px;transition:background .15s,color .15s}
+  .ver-btn:hover{background:rgba(255,255,255,.16);color:#fff}
+  .cl-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}
+  .cl-modal.hidden{display:none}
+  .cl-card{background:var(--surf);border:1px solid var(--bd);border-radius:10px;box-shadow:var(--shadow);max-width:640px;width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
+  .cl-hdr{padding:12px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;background:var(--s2)}
+  .cl-title{font-size:14px;font-weight:700}
+  .cl-close{background:none;border:none;font-size:22px;color:var(--t2);cursor:pointer;line-height:1;padding:0 4px}
+  .cl-close:hover{color:var(--text)}
+  .cl-body{padding:14px 18px;overflow-y:auto}
+  .cl-entry{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--bd)}
+  .cl-entry:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+  .cl-ver{font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:var(--red)}
+  .cl-date{font-family:'DM Mono',monospace;font-size:10px;color:var(--t3);margin-left:8px}
+  .cl-list{margin-top:8px;padding-left:18px;font-size:12px;color:var(--text);line-height:1.55}
+  .cl-list li{margin-bottom:4px}
 </style>
 </head>
 <body>
 <div class="hdr">
   <div class="hdr-t">TQS Month-End Billing Processor</div>
-  <div class="hdr-s">Dates · Rules · Audit · Export · SharePoint</div>
+  <div class="hdr-s">Dates · Rules · Audit · Export · SharePoint <button class="ver-btn" onclick="showChangelog()" title="View change log" id="verBtn">v—</button></div>
+</div>
+<div class="cl-modal hidden" id="clModal" onclick="if(event.target===this)hideChangelog()">
+  <div class="cl-card">
+    <div class="cl-hdr">
+      <div class="cl-title">📜 Change Log</div>
+      <button class="cl-close" onclick="hideChangelog()" aria-label="Close">×</button>
+    </div>
+    <div class="cl-body" id="clBody"></div>
+  </div>
 </div>
 <div class="steps" id="steps">
   <div class="stp active" id="st1"><div class="stp-n">1</div>Dates &amp; Period</div>
@@ -252,6 +277,22 @@
 <div id="s5" class="hidden"></div>
 </div>
 <script id="mainScript">
+// ── VERSION & CHANGELOG ──────────────────────────────────────────────────
+// Newest entries first. Bump APP_VERSION when shipping user-visible changes.
+const APP_VERSION='1.2.0';
+const CHANGELOG=[
+  {
+    version:'1.2.0',
+    date:'2026-04-27',
+    changes:[
+      'New audit type <b>agreement-coverage</b>: catches priced or contracted agreements that start or end mid-period and verifies the prorated amount. Monthly Pricing / Flat-Rate-Monthly use (active WD ÷ total WD) × rate. Contracted Units use per-week partial-week math summed across the active range.',
+      'DB load now consumes the new <code>contractedAgreements</code> field from the n8n webhook (<code>DB.contractedMap</code>, parallel to <code>flatRateMap</code>).',
+      'Monthly-pricing prorate check no longer skips full-priced rows — that mid-period role is handled by the new agreement-coverage check.',
+      'Added in-app change log (this dialog) and version badge in the header.'
+    ]
+  }
+];
+
 // ── STATE ────────────────────────────────────────────────────────────────
 const WB={A:null,B:null,C:null,D:null}, FN={A:'',B:'',C:'',D:''};
 const NM={A:'Monthly By Week',B:'Monthly Totaled',C:'Pre-Billing AH/WP',D:'Flat Rate'};
@@ -1680,7 +1721,34 @@ async function checkConfluenceRules(){
   }
 }
 
+// ── CHANGELOG MODAL ───────────────────────────────────────────────────────
+function renderChangelog(){
+  const body=document.getElementById('clBody');
+  if(!body)return;
+  body.innerHTML=CHANGELOG.map(e=>`
+    <div class="cl-entry">
+      <div><span class="cl-ver">v${e.version}</span><span class="cl-date">${e.date}</span></div>
+      <ul class="cl-list">${e.changes.map(c=>`<li>${c}</li>`).join('')}</ul>
+    </div>
+  `).join('');
+}
+function showChangelog(){
+  renderChangelog();
+  document.getElementById('clModal').classList.remove('hidden');
+}
+function hideChangelog(){
+  document.getElementById('clModal').classList.add('hidden');
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    const m=document.getElementById('clModal');
+    if(m&&!m.classList.contains('hidden'))hideChangelog();
+  }
+});
+
 window.addEventListener('DOMContentLoaded',()=>{
+  const vb=document.getElementById('verBtn');
+  if(vb)vb.textContent='v'+APP_VERSION+' · Changelog';
   checkReadiness();
   checkConfluenceRules();
   // Pre-load DB with the default period dates so it's ready when Analyze is clicked
