@@ -375,8 +375,18 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='1.6.0';
+const APP_VERSION='1.7.0';
 const CHANGELOG=[
+  {
+    version:'1.7.0',
+    date:'2026-04-28',
+    changes:[
+      'Pre-Bill Reconciliation <b>Phase 3</b>: AH and WP retros now activate when n8n Queries 6 + 7 are live in the workflow (the HTML side has been ready since v1.5.0). Retro types added to Step 3: <b>Additional Hours</b> and <b>Weekend Production</b>.',
+      '<b>AH retros</b>: walks <code>DB_PRIOR.additionalHoursBySA</code>. Contracted Units agreements apply the absorption rule — first N hours per shutdown-equivalent units bill at standard rate, remainder at OT. Monthly Pricing bills hours × otRate. Flat Rate skipped (per SOP).',
+      '<b>WP retros</b>: walks <code>DB_PRIOR.weekendProductionBySA</code>. Contracted Units uses the day-count tier (1 if 1-10 units, 2 if 11-39, 5 if 40+; 0 if <code>disableWPAutoBilling</code>). Monthly Pricing bills <code>weekendDailyRate</code> per WP row (always, even when disabled). Flat Rate skipped.',
+      'Retros emit under the agreement\'s <code>customerCode</code>/<code>accountNumber</code>. Producing-facility routing for AH retros (when the parent holds the agreement and additional hours belong on the producing facility) is a follow-up — for now, route via the existing Skip+manual workflow.'
+    ]
+  },
   {
     version:'1.6.0',
     date:'2026-04-28',
@@ -2393,6 +2403,105 @@ function buildExpectedSnapshot(pStart,pEnd){
     });
   });
 
+  // ── Additional Hours (1002) — Phase 3 ──────────────────────────────────
+  // Approved AH rows in prior period. CU agreements use the absorption rule
+  // (first N hours per shutdown-equivalent units at standard rate, rest at OT).
+  // Monthly Pricing always bills hours × otRate. Flat Rate never bills AH.
+  Object.entries(DB_PRIOR.additionalHoursBySA||{}).forEach(([sa,ahRows])=>{
+    if(DB_PRIOR.marelliFlatZeroSAs.has(sa))return;
+    const byAgmt={};
+    ahRows.forEach(ah=>{
+      const num=String(ah.agreementNumber||'');
+      if(!byAgmt[num])byAgmt[num]={agmt:DB_PRIOR.agreementByNumber[num]||ah,rows:[]};
+      byAgmt[num].rows.push(ah);
+    });
+    Object.entries(byAgmt).forEach(([num,group])=>{
+      const agmt=group.agmt;if(!agmt)return;
+      const cust=agmt.customerCode||agmt.accountNumber||group.rows[0].customerCode;
+      if(!cust)return;
+      const priceType=String(agmt.priceType||group.rows[0].priceType||'');
+      const otRate=parseFloat(agmt.otRate||group.rows[0].otRate)||0;
+      const stdRate=parseFloat(agmt.rate||group.rows[0].rate)||0;
+      const ch=parseFloat(agmt.weeklyContractedUnits||agmt.contractHours)||0;
+      let total=0;
+      const isCU=priceType.toLowerCase().includes('contracted');
+      const isMP=priceType.toLowerCase().includes('monthly');
+      if(isCU){
+        // Bucket AH rows by the Mon-Fri week containing approvedTime (or workedDate fallback)
+        const byWeek={};
+        group.rows.forEach(ah=>{
+          const d=new Date(ah.approvedTime||ah.workedDate);
+          const dow=d.getDay();
+          const mon=new Date(d);mon.setDate(d.getDate()-((dow+6)%7));
+          const key=mon.toISOString().slice(0,10);
+          (byWeek[key]=byWeek[key]||[]).push(ah);
+        });
+        Object.entries(byWeek).forEach(([key,wkRows])=>{
+          const mon=new Date(key);const fri=new Date(mon);fri.setDate(mon.getDate()+4);
+          const sds=getApplicableShutdowns(sa,mon.toISOString().slice(0,10),fri.toISOString().slice(0,10),num,DB_PRIOR);
+          let shutDays=0;
+          sds.forEach(sd=>{
+            const ss=new Date(Math.max(new Date(sd.startTime),mon));
+            const se=new Date(Math.min(new Date(sd.endTime),fri));
+            if(ss<=se)shutDays+=countWeekdays(ss,se);
+          });
+          let absorbed=(ch/5)*shutDays;
+          wkRows.forEach(ah=>{
+            const hrs=parseFloat(ah.hours)||0;
+            const std=Math.min(hrs,absorbed);absorbed-=std;
+            const ot=hrs-std;
+            total+=std*stdRate+ot*otRate;
+          });
+        });
+      } else if(isMP){
+        group.rows.forEach(ah=>{total+=(parseFloat(ah.hours)||0)*otRate;});
+      } else {
+        return; // Flat Rate — AH not billed
+      }
+      push(cust,sa,'additional-hours',{
+        amount:r2(total),agreement:agmt,agreementNumber:num,itemId:'1002',
+        calc:`${group.rows.length} AH row${group.rows.length!==1?'s':''} · ${priceType||'(unknown priceType)'} · expected $${r2(total)}${isCU?' (absorption applied for shutdown weeks)':''}`
+      });
+    });
+  });
+
+  // ── Weekend Production (1003) — Phase 3 ────────────────────────────────
+  // Day-count tier for CU (1 if 1-10, 2 if 11-39, 5 if 40+); MP bills weekendDailyRate per WP row;
+  // FR doesn't bill WP. disableWPAutoBilling on the supplier overrides CU to 0.
+  Object.entries(DB_PRIOR.weekendProductionBySA||{}).forEach(([sa,wpRows])=>{
+    if(DB_PRIOR.marelliFlatZeroSAs.has(sa))return;
+    const cuAgmts=(DB_PRIOR.contractedMap||{})[sa]||[];
+    const prAgmts=(DB_PRIOR.flatRateMap||{})[sa]||[];
+    const agmt=cuAgmts[0]||prAgmts[0];
+    if(!agmt)return;
+    const cust=agmt.customerCode||agmt.accountNumber;
+    if(!cust)return;
+    const priceType=String(agmt.priceType||'').toLowerCase();
+    const stdRate=parseFloat(agmt.rate)||0;
+    const wkdRate=parseFloat(agmt.weekendDailyRate)||0;
+    const ch=parseFloat(agmt.weeklyContractedUnits||agmt.contractHours)||0;
+    const disable=!!agmt.disableWPAutoBilling||!!wpRows[0].disableWPAutoBilling;
+    let total=0,explain='';
+    if(priceType.includes('contracted')){
+      if(disable){total=0;explain='CU + disableWPAutoBilling = $0';}
+      else{
+        let days=0;
+        if(ch>=40)days=5;else if(ch>=11)days=2;else if(ch>=1)days=1;
+        total=wpRows.length*days*stdRate;
+        explain=`CU · ${ch} units → ${days} day${days!==1?'s':''} per WP × $${stdRate} × ${wpRows.length} row${wpRows.length!==1?'s':''}`;
+      }
+    } else if(priceType.includes('monthly')){
+      total=wpRows.length*wkdRate;
+      explain=`MP · $${wkdRate} weekend daily × ${wpRows.length} row${wpRows.length!==1?'s':''} (always billed, even if disabled)`;
+    } else {
+      return; // Flat Rate
+    }
+    push(cust,sa,'weekend-production',{
+      amount:r2(total),agreement:agmt,agreementNumber:String(agmt.agreementNumber||''),itemId:'1003',
+      calc:`${wpRows.length} WP row${wpRows.length!==1?'s':''} · ${explain} · expected $${r2(total)}`
+    });
+  });
+
   return out;
 }
 
@@ -2418,6 +2527,8 @@ function getBilledTotal(snap,cust,sa,type){
     case'monthly-pricing':return collect(['1005'],d=>d.includes('Monthly Pricing'));
     case'flat-rate':return collect(['1005'],d=>!d.includes('Shutdown')&&!d.includes('Monthly Pricing'));
     case'shutdown-credit':return collect(['1005'],d=>d.includes('Shutdown Credit'));
+    case'additional-hours':return collect(['1002']);
+    case'weekend-production':return collect(['1003']);
     default:return{amount:0,memo:'',rows:[]};
   }
 }
@@ -2425,7 +2536,7 @@ function getBilledTotal(snap,cust,sa,type){
 // Diffs expected vs billed and produces retro adjustment entries. |delta|<$0.01 = match.
 function buildRetroAdjustments(priorStart){
   const out=[];
-  const types=['contracted-units','monthly-pricing','flat-rate','shutdown-credit'];
+  const types=['contracted-units','monthly-pricing','flat-rate','shutdown-credit','additional-hours','weekend-production'];
   // Union of (cust,sa) keys across both snapshots
   const keys=new Set();
   Object.entries(RECON.billedSnapshot).forEach(([c,sas])=>Object.keys(sas).forEach(sa=>keys.add(c+'|'+sa)));
@@ -2446,7 +2557,7 @@ function buildRetroAdjustments(priorStart){
         decision:null,fixedAmount:null,
         agreement:exp&&exp.agreement,agreementNumber:exp&&exp.agreementNumber||'',
         originalMemo:billed.memo,
-        desc:({'contracted-units':'Contracted Units','monthly-pricing':'Monthly Pricing','flat-rate':'Flat Rate','shutdown-credit':'Shutdown Credit'})[type],
+        desc:({'contracted-units':'Contracted Units','monthly-pricing':'Monthly Pricing','flat-rate':'Flat Rate','shutdown-credit':'Shutdown Credit','additional-hours':'Additional Hours','weekend-production':'Weekend Production'})[type],
         calc:exp&&exp.calc||`No expected billing in prior period · billed $${billed.amount}`,
         note:exp?'':'Customer was billed but no matching agreement found in DB_PRIOR — may have ended.'
       });
@@ -2494,7 +2605,9 @@ function renderReconStep3(custCount){
     'contracted-units':{l:'Contracted Units',i:'📊'},
     'monthly-pricing':{l:'Monthly Pricing',i:'📅'},
     'flat-rate':{l:'Flat Rate',i:'💵'},
-    'shutdown-credit':{l:'Shutdown Credits',i:'🏭'}
+    'shutdown-credit':{l:'Shutdown Credits',i:'🏭'},
+    'additional-hours':{l:'Additional Hours',i:'⏱'},
+    'weekend-production':{l:'Weekend Production',i:'🗓'}
   };
 
   const sectionHtml=Object.entries(byType).map(([type,items])=>{
