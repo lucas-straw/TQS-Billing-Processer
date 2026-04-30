@@ -375,8 +375,17 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='1.7.7';
+const APP_VERSION='1.7.8';
 const CHANGELOG=[
+  {
+    version:'1.7.8',
+    date:'2026-04-30',
+    changes:[
+      'Augmented retro rows now populate <code>CURRENCY</code> and <code>SI_LINEITEM_DATE</code> from the matching prior pre-bill row (was previously blank, leaving Sage import incomplete).',
+      'MEMO column rewritten to be self-explanatory. Pattern: <code>Retro-Change [Mon YYYY]: &lt;summary&gt; · &lt;original reference&gt;</code>. The <i>summary</i> describes what the retro is for — e.g., <i>"Contracted units adj — shutdown 04/13/2026–04/19/2026"</i>, <i>"Additional hours — 5 approved AH rows added"</i>, <i>"Weekend production — 8 WP rows added"</i>, <i>"Shutdown credit recompute (post-pre-bill DB state)"</i>. For shutdown-driven CU credits, the actual shutdown dates are pulled from DB_PRIOR and inlined.',
+      'Note for next release: HST / VAT recompute on the adjusted taxable base + volume-discount line-item recompute are coming in v1.7.9 / v1.8.0. Lucas\'s feedback explicitly called these out and they\'re tracked in <code>docs/PROJECT_LOG.md</code>.'
+    ]
+  },
   {
     version:'1.7.7',
     date:'2026-04-30',
@@ -2271,7 +2280,7 @@ function buildBilledSnapshot(wb){
     const ci=(n)=>hdr.indexOf(n);
     const cF=ci('CUSTOMER_ID'),cI=ci('ITEMID'),cQ=ci('QUANTITY'),cP=ci('PRICE');
     const cClass=ci('SODOCUMENTENTRY_CLASSID'),cDesc=ci('ITEMDESC');
-    const cMemo=ci('MEMO'),cLineDate=ci('SI_LINEITEM_DATE');
+    const cMemo=ci('MEMO'),cLineDate=ci('SI_LINEITEM_DATE'),cCurr=ci('CURRENCY');
     if(cI===-1||cP===-1)return;
     let cust='';
     rows.forEach((row,i)=>{
@@ -2283,13 +2292,14 @@ function buildBilledSnapshot(wb){
       const desc=cDesc!==-1?String(row[cDesc]||''):'';
       const memo=cMemo!==-1?String(row[cMemo]||''):'';
       const lineDate=cLineDate!==-1?row[cLineDate]:'';
+      const currency=cCurr!==-1?String(row[cCurr]||''):'';
       const qty=parseFloat(row[cQ])||0;
       const price=parseFloat(row[cP])||0;
       snap[cust]=snap[cust]||{};
       snap[cust][sa]=snap[cust][sa]||{byItem:{},totals:{},sheets:new Set()};
       snap[cust][sa].sheets.add(sName);
       (snap[cust][sa].byItem[itemId]=snap[cust][sa].byItem[itemId]||[])
-        .push({i,row:[...row],sName,desc,memo,qty,price,itemId,lineDate});
+        .push({i,row:[...row],sName,desc,memo,qty,price,itemId,lineDate,currency});
       const t=snap[cust][sa].totals[itemId]=snap[cust][sa].totals[itemId]||{qty:0,priceSum:0};
       t.qty+=qty;t.priceSum+=price;
     });
@@ -2700,13 +2710,17 @@ function buildRetroAdjustments(priorStart){
       // see exactly which weekly row(s) drove the retro — critical for bill-by-week
       // CU customers where, e.g., 2 of 4 weeks were shut down.
       const sds=getApplicableShutdowns(sa,priorStart,priorEnd,agreementNumber||(inferredAgmt&&inferredAgmt.agreementNumber)||'',DB_PRIOR);
+      const overlapDates=[];
       const billedRowsDetail=billedRows.map(r=>{
         let shutdownNote='';
         const wkStart=parseLineDate(r.lineDate);
         if(wkStart){
           const wkEnd=new Date(wkStart);wkEnd.setDate(wkStart.getDate()+4);
           const overlap=sds.find(sd=>{const ss=new Date(sd.startTime),se=new Date(sd.endTime);return ss<=wkEnd&&se>=wkStart;});
-          if(overlap)shutdownNote=`⚠ Shutdown ${overlap.startTime}–${overlap.endTime}`;
+          if(overlap){
+            shutdownNote=`⚠ Shutdown ${overlap.startTime}–${overlap.endTime}`;
+            overlapDates.push(`${overlap.startTime}–${overlap.endTime}`);
+          }
         }
         return{
           rowIdx:r.i,sheet:r.sName,lineDate:formatLineDate(r.lineDate),
@@ -2714,6 +2728,37 @@ function buildRetroAdjustments(priorStart){
           shutdownNote
         };
       });
+
+      // Sample row data (currency, raw lineDate) for the retro CSV row.
+      // Pulled from the first billed row when present, since retros inherit
+      // the currency / line-date framing of the billing they adjust.
+      const sampleCurrency=firstRow?firstRow.currency:'';
+      const sampleLineDateRaw=firstRow?firstRow.lineDate:'';
+
+      // Build a self-explanatory memo summary based on retro type and context.
+      // Goal: someone reading the augmented CSV's MEMO column should be able to
+      // understand what the retro is for without consulting the recon UI.
+      let memoSummary='';
+      const uniqueShutdowns=[...new Set(overlapDates)];
+      if(type==='contracted-units'){
+        memoSummary=uniqueShutdowns.length
+          ? `Contracted units adj — shutdown ${uniqueShutdowns.join(', ')}`
+          : `Contracted units adj — agreement reconciliation`;
+      } else if(type==='shutdown-credit'){
+        memoSummary=`Shutdown credit recompute (post-pre-bill DB state)`;
+      } else if(type==='monthly-pricing'){
+        memoSummary=`Monthly pricing pro-ration adj`;
+      } else if(type==='flat-rate'){
+        memoSummary=`Flat rate pro-ration adj`;
+      } else if(type==='additional-hours'){
+        const ahCount=(DB_PRIOR.additionalHoursBySA[sa]||[]).filter(ah=>String(ah.agreementNumber||'')===String(agreementNumber||'')).length;
+        memoSummary=ahCount?`Additional hours — ${ahCount} approved AH row${ahCount!==1?'s':''} added`:`Additional hours adj`;
+      } else if(type==='weekend-production'){
+        const wpCount=(DB_PRIOR.weekendProductionBySA[sa]||[]).length;
+        memoSummary=wpCount?`Weekend production — ${wpCount} WP row${wpCount!==1?'s':''} added`:`Weekend production adj`;
+      } else {
+        memoSummary=`${type} adj`;
+      }
 
       out.push({
         id:'retro-'+(++cid),custId:cust,sa,type,
@@ -2723,6 +2768,7 @@ function buildRetroAdjustments(priorStart){
         agreement:inferredAgmt,agreementNumber,priceType,
         originalMemo:billed.memo,sampleMemo,originalDesc,
         billedRowCount:billedRows.length,billedSheet,billedRowsDetail,
+        sampleCurrency,sampleLineDateRaw,memoSummary,
         desc:({'contracted-units':'Contracted Units','monthly-pricing':'Monthly Pricing','flat-rate':'Flat Rate','shutdown-credit':'Shutdown Credit','additional-hours':'Additional Hours','weekend-production':'Weekend Production'})[type],
         calc:exp&&exp.calc||`No matching expected billing for ${type} in prior period · billed $${billed.amount} across ${billedRows.length} row${billedRows.length!==1?'s':''}`,
         note:diagnosticNote||(exp?'':'Customer was billed but no matching agreement found in DB_PRIOR — may have ended.')
@@ -2916,14 +2962,25 @@ function ciFind(hdr,name){
 function buildRetroRow(hdr,retro,periodLabel,line){
   const ci=(n)=>ciFind(hdr,n);
   const r=Array(hdr.length).fill('');
-  const cClass=ci('SODOCUMENTENTRY_CLASSID'),cI=ci('ITEMID'),cQ=ci('QUANTITY'),cP=ci('PRICE'),cDesc=ci('ITEMDESC'),cMemo=ci('MEMO'),cLine=ci('LINE');
+  const cClass=ci('SODOCUMENTENTRY_CLASSID'),cI=ci('ITEMID'),cQ=ci('QUANTITY'),cP=ci('PRICE');
+  const cDesc=ci('ITEMDESC'),cMemo=ci('MEMO'),cLine=ci('LINE');
+  const cCurr=ci('CURRENCY'),cLineDate=ci('SI_LINEITEM_DATE');
   if(cClass!==-1)r[cClass]=retro.sa;
   if(cI!==-1)r[cI]=retro.itemId;
   if(cQ!==-1)r[cQ]=1;
   const amt=retro.decision==='fix'?retro.fixedAmount:retro.retroAmount;
   if(cP!==-1)r[cP]=amt;
   if(cDesc!==-1)r[cDesc]=`Retro: ${retro.desc} (${periodLabel})`;
-  if(cMemo!==-1)r[cMemo]=`Retro-Change [${periodLabel}]: ${retro.originalMemo||(retro.agreementNumber?'Reference R'+retro.agreementNumber:'')}`;
+  if(cCurr!==-1&&retro.sampleCurrency)r[cCurr]=retro.sampleCurrency;
+  if(cLineDate!==-1&&retro.sampleLineDateRaw!=='')r[cLineDate]=retro.sampleLineDateRaw;
+  if(cMemo!==-1){
+    // Descriptive memo: someone reading the augmented CSV's MEMO column should
+    // be able to understand what the retro is for. Pattern:
+    //   Retro-Change [Mar 2026]: <summary> · Reference R12345
+    const reference=retro.originalMemo||(retro.agreementNumber?'Reference R'+retro.agreementNumber:'');
+    const summary=retro.memoSummary||retro.desc||retro.type;
+    r[cMemo]=`Retro-Change [${periodLabel}]: ${summary}${reference?' · '+reference:''}`;
+  }
   if(cLine!==-1)r[cLine]=line;
   return r;
 }
