@@ -14,7 +14,8 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
-| v1.7.7 | 2026-04-30 | Step 3 bulk actions (Accept All / Skip All / section bulk) now visually flip the per-row buttons via the `act` class. Pending KPI counter now reflects live decision state. | _pending merge_ |
+| v1.7.8 | 2026-04-30 | Retro rows now populate CURRENCY and SI_LINEITEM_DATE; MEMO is self-explanatory with shutdown dates / AH+WP counts inlined. | _pending merge_ |
+| v1.7.7 | 2026-04-30 | Step 3 bulk actions visually flip per-row buttons + live Pending counter. | `f74c6b4` |
 | v1.7.6 | 2026-04-30 | Case-insensitive column lookup in recon CSV gen (fixes empty MEMO on retro rows). Adds PROJECT_LOG.md. | `7618091` |
 | v1.7.5 | 2026-04-30 | Per-retro prior-rows expandable detail (with shutdown overlap highlighting). Currency-neutral KPIs (counts, not mixed-$ totals). Auto-Matched counter as completeness signal. | `b7a93bd` |
 | v1.7.4 | 2026-04-30 | Hotfix: unhide `#rs4` Step 4 card so Generate Augmented CSVs button produces visible output. | `cbbe975` |
@@ -47,9 +48,9 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 **Open items / not yet shipped:**
 
-1. **HST / VAT recomputation against new retro net** — when contracted-units retro changes the taxable base, the existing tax row should also adjust. Currently not computed. Spec section 3.3 calls it out but I haven't built it yet.
+1. **HST / VAT recomputation against new retro net** — _next up: v1.7.9._ When CU/MP/FR/AH/WP retro changes the taxable base, the existing 1053 (HST 13%) / 1047 (VAT 16%) rows should also adjust. Per CLAUDE.md the spec is "per `SI_LINEITEM_DATE`, never aggregated" — initial impl will do per (cust × SA) aggregate (consistent with how retros are already aggregated) and document the limitation.
 
-2. **Volume discount recomputation** — same shape: if a CU retro changes the customer's billing tier, the 1096 discount needs adjusting. Not built.
+2. **Volume discount recomputation** — _planned: v1.8.0._ When a CU retro changes the customer's billing tier, the 1096 discount needs adjusting. Read stated % from existing 1096 rows in billed snapshot, recompute against new base, generate retro for delta.
 
 3. **Producing-facility routing for AH retros** — when an AH retro is for an agreement where `additionalHourResponsibility = 'Producing Facility'`, the retro should bill to the producing facility's C-code, not the parent. Currently emits under the agreement's `customerCode`/`accountNumber`. Workaround: use Skip + manual reroute via Month-End workflow.
 
