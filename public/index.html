@@ -375,8 +375,18 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='1.7.4';
+const APP_VERSION='1.7.5';
 const CHANGELOG=[
+  {
+    version:'1.7.5',
+    date:'2026-04-30',
+    changes:[
+      'Reconciliation Step 3: each retro card now has an expandable <i>"Show prior rows"</i> section listing every prior pre-bill row that contributed to the billed total — row index, <code>SI_LINEITEM_DATE</code>, ITEMID, QTY, PRICE, MEMO. Critical for bill-by-week customers where, e.g., 2 of 4 weeks were shut down — the reviewer can now see exactly which rows are affected.',
+      'For shutdown retros, weekly rows that overlap a Qnet shutdown are highlighted in red with a <i>"⚠ Shutdown YYYY-MM-DD–YYYY-MM-DD"</i> note inline. Makes it obvious which row(s) drove the credit.',
+      'Replaced currency-aggregated KPIs (which mixed USD/CAD/EUR/etc. into nonsense totals) with row counts: <b>Total Retros</b> · <b>Add Rows</b> · <b>Remove / Credit</b> · <b>Auto-Matched</b> · <b>Pending</b>.',
+      'Added <b>Auto-Matched</b> counter — number of (customer × SA × type) checks where billed already matched expected. Confirms the rest of the pre-bill is current and surfaces the completeness of the audit ("we checked X, found Y changes, Z were already correct").'
+    ]
+  },
   {
     version:'1.7.4',
     date:'2026-04-30',
@@ -2246,7 +2256,7 @@ function buildBilledSnapshot(wb){
     const ci=(n)=>hdr.indexOf(n);
     const cF=ci('CUSTOMER_ID'),cI=ci('ITEMID'),cQ=ci('QUANTITY'),cP=ci('PRICE');
     const cClass=ci('SODOCUMENTENTRY_CLASSID'),cDesc=ci('ITEMDESC');
-    const cMemo=ci('MEMO');
+    const cMemo=ci('MEMO'),cLineDate=ci('SI_LINEITEM_DATE');
     if(cI===-1||cP===-1)return;
     let cust='';
     rows.forEach((row,i)=>{
@@ -2257,18 +2267,38 @@ function buildBilledSnapshot(wb){
       if(!cust||!sa||!itemId)return;
       const desc=cDesc!==-1?String(row[cDesc]||''):'';
       const memo=cMemo!==-1?String(row[cMemo]||''):'';
+      const lineDate=cLineDate!==-1?row[cLineDate]:'';
       const qty=parseFloat(row[cQ])||0;
       const price=parseFloat(row[cP])||0;
       snap[cust]=snap[cust]||{};
       snap[cust][sa]=snap[cust][sa]||{byItem:{},totals:{},sheets:new Set()};
       snap[cust][sa].sheets.add(sName);
       (snap[cust][sa].byItem[itemId]=snap[cust][sa].byItem[itemId]||[])
-        .push({i,row:[...row],sName,desc,memo,qty,price});
+        .push({i,row:[...row],sName,desc,memo,qty,price,itemId,lineDate});
       const t=snap[cust][sa].totals[itemId]=snap[cust][sa].totals[itemId]||{qty:0,priceSum:0};
       t.qty+=qty;t.priceSum+=price;
     });
   });
   return snap;
+}
+
+// Parses an SI_LINEITEM_DATE value (Excel serial number or string) to a JS Date.
+// Returns null on failure. Excel serial: days since 1899-12-30 (Lotus 1900 bug).
+function parseLineDate(v){
+  if(v===null||v===undefined||v==='')return null;
+  if(typeof v==='number'){
+    return new Date(Math.round((v-25569)*86400*1000));
+  }
+  const s=String(v).trim();
+  let m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m)return new Date(+m[3],+m[1]-1,+m[2]);
+  if(/^\d{4}-\d{2}-\d{2}/.test(s))return new Date(s.slice(0,10));
+  return null;
+}
+function formatLineDate(v){
+  const d=parseLineDate(v);if(!d||isNaN(d.getTime()))return String(v||'');
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return`${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
 // DB_PRIOR loader — same fetch as loadDBData, writes to DB_PRIOR, updates the
@@ -2575,6 +2605,10 @@ function buildRetroAdjustments(priorStart){
   const types=['contracted-units','monthly-pricing','flat-rate','shutdown-credit','additional-hours','weekend-production'];
   const keys=new Set();
   Object.entries(RECON.billedSnapshot).forEach(([c,sas])=>Object.keys(sas).forEach(sa=>keys.add(c+'|'+sa)));
+  // Track auto-matched cases (billed ≈ expected within tolerance) so the
+  // reviewer can see "we checked X, found Y changes, Z were already correct."
+  let matchCount=0;
+  const priorEnd=document.getElementById('rPriorEnd').value;
   keys.forEach(key=>{
     const[cust,sa]=key.split('|');
     if(DB_PRIOR.marelliFlatZeroSAs.has(sa))return;
@@ -2583,7 +2617,12 @@ function buildRetroAdjustments(priorStart){
       const exp=((RECON.expectedSnapshot[cust]||{})[sa]||{})[type];
       const expectedAmt=exp&&exp.amount!=null?exp.amount:0;
       const retroAmount=r2(expectedAmt-billed.amount);
-      if(Math.abs(retroAmount)<0.01)return;
+      if(Math.abs(retroAmount)<0.01){
+        // Auto-matched — only count if there was something to check (billed > 0
+        // or expected > 0). Pure 0/0 cells from product-row iteration don't count.
+        if(billed.amount>0||expectedAmt>0)matchCount++;
+        return;
+      }
 
       // Enrich with prior-row context for the reviewer.
       const billedRows=billed.rows||[];
@@ -2642,6 +2681,25 @@ function buildRetroAdjustments(priorStart){
         }
       }
 
+      // Per-row detail with shutdown overlap (when applicable). Lets the reviewer
+      // see exactly which weekly row(s) drove the retro — critical for bill-by-week
+      // CU customers where, e.g., 2 of 4 weeks were shut down.
+      const sds=getApplicableShutdowns(sa,priorStart,priorEnd,agreementNumber||(inferredAgmt&&inferredAgmt.agreementNumber)||'',DB_PRIOR);
+      const billedRowsDetail=billedRows.map(r=>{
+        let shutdownNote='';
+        const wkStart=parseLineDate(r.lineDate);
+        if(wkStart){
+          const wkEnd=new Date(wkStart);wkEnd.setDate(wkStart.getDate()+4);
+          const overlap=sds.find(sd=>{const ss=new Date(sd.startTime),se=new Date(sd.endTime);return ss<=wkEnd&&se>=wkStart;});
+          if(overlap)shutdownNote=`⚠ Shutdown ${overlap.startTime}–${overlap.endTime}`;
+        }
+        return{
+          rowIdx:r.i,sheet:r.sName,lineDate:formatLineDate(r.lineDate),
+          itemId:r.itemId,qty:r.qty,price:r.price,memo:r.memo,desc:r.desc,
+          shutdownNote
+        };
+      });
+
       out.push({
         id:'retro-'+(++cid),custId:cust,sa,type,
         itemId:exp&&exp.itemId||(type==='contracted-units'?'1001':'1005'),
@@ -2649,13 +2707,14 @@ function buildRetroAdjustments(priorStart){
         decision:null,fixedAmount:null,
         agreement:inferredAgmt,agreementNumber,priceType,
         originalMemo:billed.memo,sampleMemo,originalDesc,
-        billedRowCount:billedRows.length,billedSheet,
+        billedRowCount:billedRows.length,billedSheet,billedRowsDetail,
         desc:({'contracted-units':'Contracted Units','monthly-pricing':'Monthly Pricing','flat-rate':'Flat Rate','shutdown-credit':'Shutdown Credit','additional-hours':'Additional Hours','weekend-production':'Weekend Production'})[type],
         calc:exp&&exp.calc||`No matching expected billing for ${type} in prior period · billed $${billed.amount} across ${billedRows.length} row${billedRows.length!==1?'s':''}`,
         note:diagnosticNote||(exp?'':'Customer was billed but no matching agreement found in DB_PRIOR — may have ended.')
       });
     });
   });
+  RECON.matchCount=matchCount;
   return out;
 }
 
@@ -2663,9 +2722,10 @@ function renderReconStep3(custCount){
   const c=document.getElementById('rs3');if(!c)return;
   c.classList.remove('hidden');
   const adjs=RECON.retroAdjustments;
-  const charges=adjs.filter(a=>a.retroAmount>0).reduce((s,a)=>s+a.retroAmount,0);
-  const credits=adjs.filter(a=>a.retroAmount<0).reduce((s,a)=>s+a.retroAmount,0);
-  const net=r2(charges+credits);
+  // Currency-neutral counts (mixed-currency $ totals are misleading).
+  const addCount=adjs.filter(a=>a.retroAmount>0).length;
+  const creditCount=adjs.filter(a=>a.retroAmount<0).length;
+  const matchCount=RECON.matchCount||0;
   const ahReady=Object.keys(DB_PRIOR.additionalHoursBySA).length>0;
   const wpReady=Object.keys(DB_PRIOR.weekendProductionBySA).length>0;
   const dbBanner=`<div style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:7px 12px;font-size:11px;color:var(--t2);margin-bottom:10px;font-family:'DM Mono',monospace">
@@ -2729,8 +2789,23 @@ function renderReconStep3(custCount){
             <div class="cc" style="flex-direction:column;align-items:flex-start;gap:2px">
               <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--t2)">${escapeHtml(a.calc)}</span>
               ${a.originalDesc?`<span style="font-size:10px;color:var(--t3);font-style:italic">Prior desc: ${escapeHtml(a.originalDesc)}</span>`:''}
-              ${a.sampleMemo?`<span style="font-size:10px;color:var(--t3);font-family:'DM Mono',monospace;word-break:break-word">${escapeHtml(a.sampleMemo)}</span>`:''}
               ${a.note?`<span style="font-size:10px;color:var(--amber);font-style:italic">${escapeHtml(a.note)}</span>`:''}
+              ${a.billedRowsDetail&&a.billedRowsDetail.length?`<details style="margin-top:4px;width:100%">
+                <summary style="font-size:10px;color:var(--blue);cursor:pointer;user-select:none">Show prior rows (${a.billedRowsDetail.length}) ▾</summary>
+                <div style="margin-top:6px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:6px 8px;overflow-x:auto">
+                  <div style="display:grid;grid-template-columns:50px 110px 50px 50px 70px 1fr;gap:8px;font-size:10px;font-family:'DM Mono',monospace;font-weight:600;color:var(--t2);padding-bottom:3px;border-bottom:1px solid var(--bd)">
+                    <span>Row</span><span>Week</span><span>Item</span><span>Qty</span><span>Price</span><span>MEMO / Note</span>
+                  </div>
+                  ${a.billedRowsDetail.map(r=>`<div style="display:grid;grid-template-columns:50px 110px 50px 50px 70px 1fr;gap:8px;font-size:10px;font-family:'DM Mono',monospace;color:${r.shutdownNote?'var(--red)':'var(--text)'};padding:3px 0;border-bottom:1px dotted var(--bd);align-items:start">
+                    <span>${r.rowIdx}</span>
+                    <span>${escapeHtml(r.lineDate)}</span>
+                    <span>${escapeHtml(r.itemId)}</span>
+                    <span>${r.qty}</span>
+                    <span>$${r.price}</span>
+                    <span style="word-break:break-word">${escapeHtml(r.memo||'')}${r.shutdownNote?`<br/><span style="color:var(--red);font-weight:600">${escapeHtml(r.shutdownNote)}</span>`:''}</span>
+                  </div>`).join('')}
+                </div>
+              </details>`:''}
             </div>
             <div class="cc" style="flex-direction:column;align-items:flex-start;gap:1px;font-family:'DM Mono',monospace;font-size:11px">
               <span>$${a.billed} → $${a.expected}</span>
@@ -2753,11 +2828,16 @@ function renderReconStep3(custCount){
       <div class="cb">
         ${dbBanner}
         <div class="sbar">
-          <div class="sc"><div class="sv">${adjs.length}</div><div class="sl2">Total</div></div>
-          <div class="sc gc"><div class="sv">+$${r2(charges)}</div><div class="sl2">Charges</div></div>
-          <div class="sc ec"><div class="sv">-$${r2(Math.abs(credits))}</div><div class="sl2">Credits</div></div>
-          <div class="sc bc"><div class="sv">${net>=0?'+':'-'}$${r2(Math.abs(net))}</div><div class="sl2">Net</div></div>
+          <div class="sc"><div class="sv">${adjs.length}</div><div class="sl2">Total Retros</div></div>
+          <div class="sc gc"><div class="sv">${addCount}</div><div class="sl2">Add Rows</div></div>
+          <div class="sc ec"><div class="sv">${creditCount}</div><div class="sl2">Remove / Credit</div></div>
+          <div class="sc bc"><div class="sv">${matchCount}</div><div class="sl2">Auto-Matched</div></div>
           <div class="sc"><div class="sv" id="rPending">${adjs.length}</div><div class="sl2">Pending</div></div>
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-bottom:10px;line-height:1.5">
+          <b>Add Rows</b> = retros that increase a customer's invoice (e.g., approved AH/WP not on the prior pre-bill).
+          <b>Remove / Credit</b> = retros that reduce an invoice (e.g., shutdowns added after the pre-bill, agreement changes).
+          <b>Auto-Matched</b> = (cust × SA × type) checks where billed already matches expected (no retro needed) — confirms the rest of the pre-bill is current.
         </div>
         <div class="btn-row" style="margin-bottom:10px">
           <button class="ap ok" style="font-size:11px;padding:3px 10px" onclick="approveReconAll()">✓ Accept All</button>
