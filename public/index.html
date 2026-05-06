@@ -1140,7 +1140,8 @@ const BOSCH={
 
 const BOSCH_WEBHOOKS={
   claudeVision:'https://teamqs.app.n8n.cloud/webhook/bosch-claude-vision',
-  qnetQuery:'https://teamqs.app.n8n.cloud/webhook/bosch-qnet-query'
+  agreements:'https://teamqs.app.n8n.cloud/webhook/bosch-agreement-lookup',
+  additionalHours:'https://teamqs.app.n8n.cloud/webhook/bosch-additional-hours'
 };
 
 // ── DB LOAD ──────────────────────────────────────────────────────────────
@@ -4441,8 +4442,8 @@ function boschParseOcrCsv(csv){
 // ── Qnet data fetches ─────────────────────────────────────────────────────
 async function boschFetchAgreements(){
   try{
-    const r=await fetch(BOSCH_WEBHOOKS.qnetQuery,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query:'agreements',supplier:226,billingMonth:BOSCH.header.billingMonth})});
+    const r=await fetch(BOSCH_WEBHOOKS.agreements,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({supplierId:226,billingPeriodStart:BOSCH.header.billingPeriodStart,billingPeriodEnd:BOSCH.header.billingPeriodEnd})});
     if(!r.ok) return[];
     const d=await r.json();
     return Array.isArray(d)?d:(d.agreements||[]);
@@ -4450,8 +4451,8 @@ async function boschFetchAgreements(){
 }
 async function boschFetchAdditionalHours(){
   try{
-    const r=await fetch(BOSCH_WEBHOOKS.qnetQuery,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query:'additional_hours',supplier:226,billingMonth:BOSCH.header.billingMonth})});
+    const r=await fetch(BOSCH_WEBHOOKS.additionalHours,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({billingStart:BOSCH.header.billingPeriodStart,billingEnd:BOSCH.header.billingPeriodEnd})});
     if(!r.ok) return[];
     const d=await r.json();
     return Array.isArray(d)?d:(d.additionalHours||[]);
