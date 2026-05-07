@@ -4461,13 +4461,30 @@ function boschIsBlankPage(base64Img){
 // total, pageCount}.
 async function boschCallClaudeVision(pageImages){
   const pages=pageImages.map(b=>({imageBase64:b,mediaType:'image/jpeg'}));
-  const resp=await fetch(BOSCH_WEBHOOKS.claudeVision,{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({pages,billingMonth:BOSCH.header.billingMonth})
-  });
-  if(!resp.ok) throw new Error('Claude Vision webhook returned '+resp.status);
-  const data=await resp.json();
-  if(!data.success) throw new Error(data.error||'OCR failed');
+  boschLog('  POST '+BOSCH_WEBHOOKS.claudeVision+' ('+pages.length+' page'+( pages.length!==1?'s':'')+')…',undefined,'log-info');
+  let resp;
+  try{
+    resp=await fetch(BOSCH_WEBHOOKS.claudeVision,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pages,billingMonth:BOSCH.header.billingMonth})
+    });
+  }catch(netErr){
+    throw new Error('Network error reaching n8n: '+netErr.message+'. Check that the workflow is active and CORS is enabled.');
+  }
+  boschLog('  HTTP '+resp.status+' '+resp.statusText,undefined,resp.ok?'log-ok':'log-err');
+  if(!resp.ok){
+    let body='';
+    try{body=await resp.text();}catch{}
+    if(body) boschLog('  Response body: '+body.slice(0,300),undefined,'log-err');
+    throw new Error('Claude Vision webhook returned '+resp.status+(body?' — '+body.slice(0,120):''));
+  }
+  let data;
+  try{data=await resp.json();}catch(parseErr){
+    const raw=await resp.text().catch(()=>'');
+    boschLog('  Could not parse JSON response: '+raw.slice(0,300),undefined,'log-err');
+    throw new Error('OCR webhook returned non-JSON: '+parseErr.message);
+  }
+  if(!data.success) throw new Error(data.error||'OCR failed (success=false)');
 
   const map={};
   let failed=0;
