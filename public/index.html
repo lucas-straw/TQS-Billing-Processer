@@ -799,7 +799,7 @@
             <div class="bosch-progress-fill" id="bParseBar" style="width:0%"></div>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
-            <button class="bosch-btn bosch-btn-primary bosch-btn-lg" id="bStartBtn" onclick="boschStartParsing()" disabled>▶ Begin Extraction</button>
+            <button class="bosch-btn bosch-btn-primary bosch-btn-lg" id="bStartBtn" onclick="boschStartParsing()">▶ Begin Extraction</button>
             <button class="bosch-btn bosch-btn-secondary" id="bStopBtn" onclick="BOSCH.abortParsing=true" style="display:none">■ Stop</button>
             <div style="width:1px;background:var(--tqs-card-border);margin:0 4px"></div>
             <button class="bosch-btn bosch-btn-secondary" onclick="boschLoadAdditionalHours()">↻ Refresh Agreements</button>
@@ -4199,12 +4199,21 @@ function boschNextStep(){
   let next=BOSCH.currentStep+1;
   if(next===4) next=5; // skip verification
   if(next===2){
-    // Validate step 1 before advancing
-    if(!boschCheckReady()) return;
+    // Only require files to view step 2; header fields are validated by Begin Extraction
+    if(!BOSCH.regPDFFiles.length){
+      const msg=document.getElementById('bUploadMsg');
+      if(msg) msg.textContent='Please upload at least one Regular Sage Invoice PDF first.';
+      return;
+    }
   }
   if(next===3){
-    // Trigger extraction on step 2 advance
-    boschSetStep(2);
+    // Only advance to step 3 if extraction has produced results
+    if(!BOSCH.invoices.length){
+      const log=document.getElementById('bParseLog');
+      if(log&&!log.textContent) boschLog('Run extraction first — click ▶ Begin Extraction above.','','log-err');
+      return;
+    }
+    boschSetStep(3);
     return;
   }
   if(next===5){
@@ -4373,8 +4382,6 @@ function boschCheckReady(){
   hdr.dueDate=(document.getElementById('bDueDate')||{}).value||'';
   hdr.billingMonth=(document.getElementById('bBillingMonth')||{}).value||'';
   const ready=BOSCH.regPDFFiles.length>0&&hdr.masterInv&&hdr.billingMonth;
-  const btn=document.getElementById('bStartBtn');
-  if(btn) btn.disabled=!ready;
   const msg=document.getElementById('bUploadMsg');
   if(msg){
     const missing=[];
@@ -4531,6 +4538,16 @@ async function boschStartParsing(){
   BOSCH.header.invDate=document.getElementById('bInvDate').value;
   BOSCH.header.dueDate=document.getElementById('bDueDate').value;
   BOSCH.header.billingMonth=document.getElementById('bBillingMonth').value;
+
+  // Validate required header fields before starting
+  const missingFields=[];
+  if(!BOSCH.header.masterInv) missingFields.push('Master Invoice #');
+  if(!BOSCH.header.billingMonth) missingFields.push('Billing Month');
+  if(missingFields.length){
+    boschLog('Cannot start: missing '+missingFields.join(', ')+'. Go back to Step 1 and fill these in.','','log-err');
+    return;
+  }
+
   BOSCH.abortParsing=false;
 
   document.getElementById('bParseLog').textContent='';
