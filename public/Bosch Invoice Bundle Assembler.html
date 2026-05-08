@@ -1077,8 +1077,11 @@ async function startParsing() {
     if (APP.headerValues.billingPeriod) {
       const periodStart = APP.headerValues.billingPeriodStart;
       const periodEnd = APP.headerValues.billingPeriodEnd;
-      const billingWeeks = APP.headerValues.billingWeeks || 4;
-      logMsg(`\nFetching Bosch agreements (period: ${periodStart} to ${periodEnd}, ${billingWeeks} weeks)...`, 'info');
+      // Derive week count from actual dates (Monday–Sunday count) rather than stored state
+      const msPerDay = 24 * 60 * 60 * 1000;
+      const calendarDays = Math.round((new Date(periodEnd) - new Date(periodStart)) / msPerDay) + 1;
+      const billingWeeks = Math.round(calendarDays / 7);
+      logMsg(`\nFetching Bosch agreements (period: ${periodStart} to ${periodEnd}, ${calendarDays} calendar days = ${billingWeeks} weeks)...`, 'info');
       const agreements = await fetchAgreementData(periodStart, periodEnd);
       APP.agreementData = {};
       agreements.forEach(ag => {
@@ -2237,10 +2240,12 @@ async function refreshAgreements() {
   updateBillingPeriodDates();
   const periodStart = APP.billingPeriodStart;
   const periodEnd = APP.billingPeriodEnd;
-  const billingWeeks = APP.billingWeeks || 4;
- 
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const calendarDays = Math.round((new Date(periodEnd) - new Date(periodStart)) / msPerDay) + 1;
+  const billingWeeks = Math.round(calendarDays / 7);
+
   document.getElementById('parseLog').style.display = 'block';
-  logMsg(`\nRefreshing agreements for ${bp} (${periodStart} to ${periodEnd}, ${billingWeeks} weeks)...`, 'info');
+  logMsg(`\nRefreshing agreements for ${bp} (${periodStart} to ${periodEnd}, ${calendarDays} days = ${billingWeeks} weeks)...`, 'info');
  
   const agreements = await fetchAgreementData(periodStart, periodEnd);
   APP.agreementData = {};
@@ -2322,8 +2327,11 @@ function updateBillingPeriodDates() {
   if (APP.agreementData && Object.keys(APP.agreementData).length > 0) {
     const periodStart = APP.billingPeriodStart;
     const periodEnd = APP.billingPeriodEnd;
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const calDays = Math.round((new Date(periodEnd) - new Date(periodStart)) / msPerDay) + 1;
+    const wks = Math.round(calDays / 7);
     for (const [agrNum, ag] of Object.entries(APP.agreementData)) {
-      ag.scheduledHours = calculateScheduledHours(ag, periodStart, periodEnd, bp.weeks);
+      ag.scheduledHours = calculateScheduledHours(ag, periodStart, periodEnd, wks);
     }
     // Re-attach to invoices
     (APP.invoices || []).forEach(inv => {
