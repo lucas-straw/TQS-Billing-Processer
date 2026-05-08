@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v1.9.8 | 2026-05-08 | **Bosch:** Replace HTML with user-provided version — per-page `callClaudeVision` with `systemPrompt` payload, `APP.agreementData` as keyed object, `generateBundle` loading from stored `arrayBuf`, `.step-nav` CSS class, `inv.id`-based approval assignments. | `18aab8a` |
 | v1.9.7 | 2026-05-08 | PROJECT_LOG self-update: add v1.9.6 row (changelog hook commit). | `36c5f71` |
 | v1.9.6 | 2026-05-08 | Add `.claude/settings.json` with PostToolUse hook — fires after every `git commit` and injects a reminder to update `docs/PROJECT_LOG.md`. Backfill Bosch entries v1.9.2–v1.9.5 into version table. | `d20cf3c` |
 | v1.9.5 | 2026-05-08 | **Bosch:** Fix blank PDF bundle — embed cached PDF.js-rendered PNGs instead of pdf-lib `copyPages` (which produces blank pages on Sage PDFs). Add "✕ Remove" buttons + "Clear all" per upload zone. | `392e10e` |
