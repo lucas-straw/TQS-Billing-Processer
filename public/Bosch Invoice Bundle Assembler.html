@@ -785,24 +785,34 @@ function calculateScheduledHours(agreement, periodStart, periodEnd, totalWeeks) 
   const pStart = new Date(periodStart);
   const pEnd = new Date(periodEnd);
   const aStart = agreement.startTime ? new Date(agreement.startTime) : null;
-  const aEnd = agreement.expireTime ? new Date(agreement.expireTime) : null;
- 
+  let aEnd = agreement.expireTime ? new Date(agreement.expireTime) : null;
+
+  // Monday = start of a billing week, not the end of one.
+  // An agreement expiring on a Monday contributed 0 hours that week — treat
+  // it as having expired the previous Sunday so week counts are correct.
+  if (aEnd && aEnd.getDay() === 1) {
+    aEnd = new Date(aEnd.getTime() - 86400000);
+  }
+
+  // Agreement expired before this period started — exclude entirely.
+  if (aEnd && aEnd < pStart) return 0;
+
   let weeksActive = totalWeeks;
- 
+
   // If agreement started after the billing period began, reduce weeks
   if (aStart && aStart > pStart) {
     const daysLate = (aStart - pStart) / 86400000;
     const weeksLate = Math.floor(daysLate / 7);
     weeksActive -= weeksLate;
   }
- 
+
   // If agreement ended before the billing period ended, reduce weeks
   if (aEnd && aEnd < pEnd) {
     const daysEarly = (pEnd - aEnd) / 86400000;
     const weeksEarly = Math.floor(daysEarly / 7);
     weeksActive -= weeksEarly;
   }
- 
+
   weeksActive = Math.max(0, Math.min(weeksActive, totalWeeks));
   return Math.round(contractHrs * weeksActive * 100) / 100;
 }
