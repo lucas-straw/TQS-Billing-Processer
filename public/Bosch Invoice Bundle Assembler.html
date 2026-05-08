@@ -1582,17 +1582,23 @@ async function pdfToPages(file) {
 }
 
 // ── Claude Vision OCR ─────────────────────────────────────────────────────
-async function callClaudeVision(base64Image, systemPrompt, retries = 2) {
-  // Strip data URI prefix if present
+// Sends one page at a time using the N8N batch format the webhook expects:
+// { pages: [{imageBase64, mediaType:'image/jpeg'}], billingMonth }
+// Response: { success: true, results: [{success: true, invoice: {...}}, ...] }
+async function callClaudeVision(base64Image, retries = 2) {
   const imageBase64 = base64Image.replace(/^data:[^;]+;base64,/, '');
+  const billingMonth = APP.headerValues.billingPeriod || document.getElementById('billingPeriod').value || '';
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      logMsg(`  POST to N8N OCR (attempt ${attempt + 1})…`, 'log-info');
+      logMsg(`  POST N8N OCR (attempt ${attempt + 1})…`, 'log-info');
       const resp = await fetch(N8N_OCR_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, systemPrompt, mediaType: 'image/png' }),
+        body: JSON.stringify({
+          pages: [{ imageBase64, mediaType: 'image/jpeg' }],
+          billingMonth,
+        }),
       });
 
       if (resp.status === 429) {
@@ -1603,40 +1609,32 @@ async function callClaudeVision(base64Image, systemPrompt, retries = 2) {
 
       if (!resp.ok) {
         const body = await resp.text().catch(() => '');
-        throw new Error(`HTTP ${resp.status}: ${body.slice(0, 120)}`);
+        throw new Error(`HTTP ${resp.status}: ${body.slice(0, 200)}`);
       }
 
-      const result = await resp.json();
+      const data = await resp.json();
 
-      // Handle multiple response shapes
-      if (result && result.success === false) {
-        throw new Error(result.error || 'OCR failed (success=false)');
+      // Outer success check
+      if (data && data.success === false) {
+        throw new Error(data.error || 'OCR returned success=false');
       }
 
-      let text = '';
-      if (result && (result.invoiceNumber !== undefined || result.blank !== undefined)) {
-        // Direct invoice JSON
-        return result;
-      } else if (Array.isArray(result)) {
-        const first = result[0];
-        if (first && (first.invoiceNumber !== undefined || first.blank !== undefined)) return first;
-        text = first?.data || first?.output || JSON.stringify(first);
-      } else if (result && result.data !== undefined) {
-        text = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
-      } else if (result && result.output !== undefined) {
-        text = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-      } else {
-        text = JSON.stringify(result);
+      // Extract first page result from results array
+      const results = data.results || (Array.isArray(data) ? data : []);
+      if (!results.length) throw new Error('No results in OCR response');
+
+      const r = results[0];
+      if (r && r.success === false) {
+        throw new Error(r.error || r.message || 'Page OCR failed');
       }
 
-      // Extract JSON from text
-      const match = text.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('No JSON object in OCR response');
-      return JSON.parse(match[0]);
+      // The invoice data may be at r.invoice or r itself
+      const inv = r.invoice || r;
+      return inv;
 
     } catch (err) {
       if (attempt < retries) {
-        logMsg(`  Retry after error: ${err.message}`, 'log-error');
+        logMsg(`  Retry: ${err.message}`, 'log-error');
         await sleep(3000);
       } else {
         throw err;
@@ -1645,8 +1643,8 @@ async function callClaudeVision(base64Image, systemPrompt, retries = 2) {
   }
 }
 
-// ── Process invoice pages (batch OCR) ────────────────────────────────────
-async function processInvoicePages(pages, source, prompt, onProgress) {
+// ── Process invoice pages (one-at-a-time OCR) ────────────────────────────
+async function processInvoicePages(pages, source, onProgress) {
   const invoiceMap = new Map();
   const invoiceOrder = [];
 
@@ -1654,13 +1652,13 @@ async function processInvoicePages(pages, source, prompt, onProgress) {
     if (APP.abortParsing) throw new Error('Stopped by user');
 
     const page = pages[i];
-    logMsg(`  [${source}] page ${i + 1}/${pages.length}…`, 'log-info');
+    logMsg(`[${source}] page ${i + 1}/${pages.length}…`, 'log-info');
 
     let parsed = null;
     try {
-      parsed = await callClaudeVision(page.imageData, prompt);
+      parsed = await callClaudeVision(page.imageData);
     } catch (err) {
-      logMsg(`  Page ${i + 1} OCR error: ${err.message}`, 'log-error');
+      logMsg(`  ❌ page ${i + 1} OCR error: ${err.message}`, 'log-error');
       parsed = { blank: false, error: err.message, invoiceNumber: '', serviceLocation: '' };
     }
 
@@ -1707,7 +1705,14 @@ async function processInvoicePages(pages, source, prompt, onProgress) {
       if (parsed.paymentsCreditsApplied != null) inv.paymentsCreditsApplied = parsed.paymentsCreditsApplied;
       if (parsed.totalDue != null) inv.totalDue = parsed.totalDue;
 
-      logMsg(`  Page ${i + 1}: ${invNum || '(no inv#)'} @ ${loc || '(no loc)'}`, 'log-success');
+      const agrFromItems = (() => {
+        const refs = (parsed.lineItems || []).map(li => li.referenceNumber).filter(Boolean);
+        if (!refs.length) return '';
+        const freq = {};
+        refs.forEach(r => { freq[r] = (freq[r] || 0) + 1; });
+        return Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
+      })();
+      logMsg(`  ✓ page ${i + 1}: inv# ${invNum || '—'} | loc: ${loc || '—'} | agr: ${agrFromItems || '—'}`, 'log-success');
     }
 
     if (onProgress) onProgress(i + 1, pages.length);
@@ -1885,6 +1890,11 @@ async function startParsing() {
   APP.regularPages = [];
   APP.expensePages = [];
 
+  // Ensure headerValues has billingPeriod (in case user jumped directly to step 2)
+  if (!APP.headerValues.billingPeriod) {
+    APP.headerValues.billingPeriod = document.getElementById('billingPeriod').value || '';
+  }
+
   const logEl = document.getElementById('parseLog');
   logEl.innerHTML = '';
   logEl.style.display = '';
@@ -1932,9 +1942,9 @@ async function startParsing() {
     const totalPages = APP.regularPages.length + APP.expensePages.length;
     let donePages = 0;
 
-    logMsg(`OCR: ${APP.regularPages.length} regular page(s) with REGULAR_PROMPT…`, 'log-info');
+    logMsg(`OCR: processing ${APP.regularPages.length} regular page(s)…`, 'log-info');
     const regularInvoices = await processInvoicePages(
-      APP.regularPages, 'regular', REGULAR_PROMPT,
+      APP.regularPages, 'regular',
       (cur, tot) => { donePages = cur; updateProgress(donePages, totalPages, `OCR: page ${donePages}/${totalPages}`); }
     );
 
@@ -1943,9 +1953,9 @@ async function startParsing() {
     // OCR expense
     let expenseInvoices = [];
     if (APP.expensePages.length) {
-      logMsg(`OCR: ${APP.expensePages.length} expense page(s) with EXPENSE_PROMPT…`, 'log-info');
+      logMsg(`OCR: processing ${APP.expensePages.length} expense page(s)…`, 'log-info');
       expenseInvoices = await processInvoicePages(
-        APP.expensePages, 'expense', EXPENSE_PROMPT,
+        APP.expensePages, 'expense',
         (cur) => { updateProgress(APP.regularPages.length + cur, totalPages, `OCR expense: page ${cur}/${APP.expensePages.length}`); }
       );
     }
@@ -1964,13 +1974,19 @@ async function startParsing() {
     logMsg(`Got ${agreements.length} agreement(s).`, 'log-success');
 
     // Match agreements to invoices — use Qnet location name as authoritative
+    logMsg('Matching invoices to Qnet agreements…', 'log-info');
     APP.invoices.forEach(inv => {
       const agrNum = inv.agreementNumber.replace(/^F/i, '');
       const match = agreements.find(a => String(a.agreementNumber || a.id || '') === agrNum);
       if (match) {
         inv.matchedAgreement = match;
         const qnetName = match.locationName || match.location || '';
-        if (qnetName) inv.location = qnetName;
+        if (qnetName) {
+          logMsg(`  inv# ${inv.invoiceNumber} → agr ${agrNum} → "${qnetName}"`, 'log-success');
+          inv.location = qnetName;
+        }
+      } else if (agrNum) {
+        logMsg(`  inv# ${inv.invoiceNumber} → agr ${agrNum} — no Qnet match`, 'log-error');
       }
     });
 
@@ -2550,35 +2566,63 @@ async function generateBundle() {
     progStatus.textContent = 'Assembling bundle…';
 
     const allApprovals = [...APP.approvals.qnet, ...APP.approvals.expense];
-    const total = APP.sortedInvoices.length;
-    let done = 0;
 
-    for (const inv of APP.sortedInvoices) {
-      // Copy invoice pages
-      const srcIdx = inv.sourceFileIndex || 0;
-      const srcDocs = inv.source === 'expense' ? expensePdfDocs : regularPdfDocs;
-      const srcDoc = srcDocs[srcIdx];
-      if (srcDoc) {
-        for (const pageIdx of inv.pages) {
-          try {
-            const [copied] = await merged.copyPages(srcDoc, [pageIdx - 1]);
-            merged.addPage(copied);
-          } catch {}
+    // If no sorted invoices (e.g. OCR failed), fall back to copying all regular PDF pages in order
+    if (!APP.sortedInvoices.length) {
+      progStatus.textContent = 'No parsed invoices — copying all PDF pages in order…';
+      logMsg && logMsg('No sorted invoices found — falling back to raw PDF copy.', 'log-error');
+      for (const doc of regularPdfDocs) {
+        const indices = doc.getPageIndices();
+        const copied = await merged.copyPages(doc, indices);
+        copied.forEach(p => merged.addPage(p));
+      }
+      for (const doc of expensePdfDocs) {
+        const indices = doc.getPageIndices();
+        const copied = await merged.copyPages(doc, indices);
+        copied.forEach(p => merged.addPage(p));
+      }
+    } else {
+      const total = APP.sortedInvoices.length;
+      let done = 0;
+
+      for (const inv of APP.sortedInvoices) {
+        // Copy invoice pages
+        const srcIdx = inv.sourceFileIndex || 0;
+        const srcDocs = inv.source === 'expense' ? expensePdfDocs : regularPdfDocs;
+        const srcDoc = srcDocs[srcIdx];
+        if (!srcDoc) {
+          progStatus.textContent = `⚠ Missing source doc for inv# ${inv.invoiceNumber} (file index ${srcIdx})`;
+          console.warn('Missing srcDoc for', inv);
+        } else {
+          for (const pageIdx of inv.pages) {
+            const zeroIdx = pageIdx - 1;
+            if (zeroIdx < 0 || zeroIdx >= srcDoc.getPageCount()) {
+              console.warn(`Page index ${pageIdx} out of range for inv# ${inv.invoiceNumber}`);
+              continue;
+            }
+            try {
+              const [copied] = await merged.copyPages(srcDoc, [zeroIdx]);
+              merged.addPage(copied);
+            } catch (copyErr) {
+              console.error(`copyPages failed for inv# ${inv.invoiceNumber} page ${pageIdx}:`, copyErr);
+              progStatus.textContent = `⚠ Copy error on inv# ${inv.invoiceNumber} p${pageIdx}: ${copyErr.message}`;
+            }
+          }
         }
-      }
 
-      // Splice in assigned approvals
-      const invIdx = APP.sortedInvoices.indexOf(inv);
-      for (const [ai, ii] of Object.entries(APP.approvalAssignments)) {
-        if (ii !== invIdx) continue;
-        const appr = allApprovals[parseInt(ai)];
-        if (!appr) continue;
-        await addApprovalToBundle(merged, appr);
-      }
+        // Splice in assigned approvals
+        const invIdx = APP.sortedInvoices.indexOf(inv);
+        for (const [ai, ii] of Object.entries(APP.approvalAssignments)) {
+          if (ii !== invIdx) continue;
+          const appr = allApprovals[parseInt(ai)];
+          if (!appr) continue;
+          await addApprovalToBundle(merged, appr);
+        }
 
-      done++;
-      progBar.style.width = (30 + Math.round((done / total) * 60)) + '%';
-      progStatus.textContent = `Added invoice ${done}/${total}…`;
+        done++;
+        progBar.style.width = (30 + Math.round((done / total) * 60)) + '%';
+        progStatus.textContent = `Added invoice ${done}/${total}: ${inv.invoiceNumber || '(no#)'} @ ${inv.location || '(no loc)'}`;
+      }
     }
 
     progBar.style.width = '95%';
