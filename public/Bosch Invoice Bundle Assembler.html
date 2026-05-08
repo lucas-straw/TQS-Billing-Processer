@@ -1651,11 +1651,14 @@ function buildSummaryRows() {
       'HST': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() }
     };
  
-    // Sum scheduled hours — skip agreements with 0 hours (e.g. expired before period start)
+    // Sum scheduled hours — skip agreements that expired on the period start date
+    // (replaced agreements whose expireTime = first day of period)
+    const periodStart = APP.headerValues.billingPeriodStart || '';
     const agrDetails = [];
     for (const [agrNum, ag] of Object.entries(agreements)) {
+      const expireDate = ag.expireTime ? ag.expireTime.substring(0, 10) : null;
+      if (expireDate && expireDate === periodStart) continue;
       const hrs = ag.scheduledHours || 0;
-      if (hrs === 0) continue;
       types['Standard hours'].schedHrs += hrs;
       types['Standard hours'].agrNums.add('F' + agrNum);
       agrDetails.push(`F${agrNum}=${hrs}`);
