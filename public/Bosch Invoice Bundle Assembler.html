@@ -1651,12 +1651,14 @@ function buildSummaryRows() {
       'HST': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() }
     };
  
-    // Sum scheduled hours from ALL agreements at this location (for the Standard hours row)
+    // Sum scheduled hours — skip agreements with 0 hours (e.g. expired before period start)
     const agrDetails = [];
     for (const [agrNum, ag] of Object.entries(agreements)) {
-      types['Standard hours'].schedHrs += (ag.scheduledHours || 0);
+      const hrs = ag.scheduledHours || 0;
+      if (hrs === 0) continue;
+      types['Standard hours'].schedHrs += hrs;
       types['Standard hours'].agrNums.add('F' + agrNum);
-      agrDetails.push(`F${agrNum}=${ag.scheduledHours}`);
+      agrDetails.push(`F${agrNum}=${hrs}`);
     }
     console.log(`[schedHrs] ${locName}: ${agrDetails.join(' + ')} = ${types['Standard hours'].schedHrs}`);
  
