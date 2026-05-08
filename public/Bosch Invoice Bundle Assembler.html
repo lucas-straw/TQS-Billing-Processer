@@ -1087,6 +1087,7 @@ async function startParsing() {
       agreements.forEach(ag => {
         const schedHrs = calculateScheduledHours(ag, periodStart, periodEnd, billingWeeks);
         APP.agreementData[ag.agreementNumber] = { ...ag, scheduledHours: schedHrs };
+        logMsg(`  F${ag.agreementNumber} @ ${ag.locationName}: contractHours=${ag.contractHours}/wk → scheduledHours=${schedHrs} (${billingWeeks} wks)`, 'info');
       });
       logMsg(`Agreement data loaded: ${agreements.length} agreements, ${Object.keys(APP.agreementData).length} unique.`, 'success');
  
@@ -1641,10 +1642,13 @@ function buildSummaryRows() {
     };
  
     // Sum scheduled hours from ALL agreements at this location (for the Standard hours row)
+    const agrDetails = [];
     for (const [agrNum, ag] of Object.entries(agreements)) {
       types['Standard hours'].schedHrs += (ag.scheduledHours || 0);
       types['Standard hours'].agrNums.add('F' + agrNum);
+      agrDetails.push(`F${agrNum}=${ag.scheduledHours}`);
     }
+    console.log(`[schedHrs] ${locName}: ${agrDetails.join(' + ')} = ${types['Standard hours'].schedHrs}`);
  
     let locTotal = 0;
  
