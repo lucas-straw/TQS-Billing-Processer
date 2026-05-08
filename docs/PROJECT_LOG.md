@@ -14,6 +14,10 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v1.9.5 | 2026-05-08 | **Bosch:** Fix blank PDF bundle — embed cached PDF.js-rendered PNGs instead of pdf-lib `copyPages` (which produces blank pages on Sage PDFs). Add "✕ Remove" buttons + "Clear all" per upload zone. | `392e10e` |
+| v1.9.4 | 2026-05-08 | **Bosch:** Fix OCR format mismatch — `callClaudeVision` now sends `{pages:[…],billingMonth}` batch format matching N8N webhook contract (was sending single-page+systemPrompt). Per-page log shows inv#/location/agreement. Agreement-to-invoice matching logs each Qnet name resolution. | `6fd747b` |
+| v1.9.3 | 2026-05-08 | **Bosch:** Standalone `Bosch Invoice Bundle Assembler.html` — full rewrite as double-click-to-open file. 5-step wizard (step 4 hidden), per-page Claude Vision OCR via N8N, `buildSummaryRows()` seeded from Qnet agreements, landscape pdf-lib cover pages, `APP` state object. | `b0c7119` |
+| v1.9.2 | 2026-05-08 | **Bosch:** Improve OCR error logging — surface HTTP status and first per-page failure reason from N8N response. | `33a500d` |
 | v1.9.0 | 2026-05-01 | **Major pivot:** reconciliation is now file-driven (4 files). Adjustment report is primary retro source; #2 vs #4 diff catches anything missed. No DB queries from this tab. Old DB-query path left in source pending v1.9.1 cleanup. | _pending merge_ |
 | v1.8.0 | 2026-04-30 | Volume discount (1096) recompute when CU/AH/WP retros change the base. HST/VAT now use post-discount net (matches existing Month-End audit). | `a1bdb72` |
 | v1.7.9 | 2026-04-30 | HST (1053) and VAT (1047) retros on adjusted taxable base. Per (cust × SA) aggregate. | `396181a` |
@@ -35,6 +39,25 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 ---
 
 ## Active work / open items
+
+### Bosch Invoice Bundle Assembler (`public/Bosch Invoice Bundle Assembler.html`)
+
+Standalone double-click HTML file — no server, no build tools.
+
+**Current state (v1.9.5):** OCR format fixed, blank PDF fixed via PNG embedding, file removal UX improved.
+
+**N8N webhooks:**
+- OCR: `https://teamqs.app.n8n.cloud/webhook/bosch-invoice-ocr` — expects `{pages:[{imageBase64,mediaType:'image/jpeg'}],billingMonth}`, returns `{success,results:[{success,invoice:{…}}]}`
+- Agreements: `https://teamqs.app.n8n.cloud/webhook/bosch-agreement-lookup` — POST `{supplierId:226,billingPeriodStart,billingPeriodEnd}`
+- Additional hours: `https://teamqs.app.n8n.cloud/webhook/bosch-additional-hours` — POST `{billingStart,billingEnd}`
+
+**Open items:**
+1. **Real OCR test with correct N8N format** — the format was wrong before v1.9.4; need to confirm OCR now succeeds end-to-end with a real billing month's PDFs.
+2. **PDF page dimensions** — `embedCachedPage` divides rendered pixels by 2 to get PDF points; verify this is correct for Sage exports (assumes `scale:2.0` in `pdfToPages`).
+3. **Multi-file invoice spanning** — if one invoice's pages span two uploaded PDFs (unusual but possible), `inv.sourceFileIndex` only tracks the first page's file; pages from subsequent files would be missed. Not yet handled.
+4. **`refreshAgreements` location update** — same Qnet-name patch applied in `startParsing` should also be in `refreshAgreements`. Verify both paths update `inv.location`.
+
+---
 
 ### Reconciliation feature
 
