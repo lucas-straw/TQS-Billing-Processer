@@ -1459,14 +1459,15 @@ function normalizeLocation(str) {
 }
 
 function downloadFile(content, filename, mimeType) {
-  const blob = content instanceof Uint8Array
-    ? new Blob([content], { type: mimeType })
-    : new Blob([content], { type: mimeType });
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
@@ -1858,11 +1859,15 @@ async function refreshAgreements() {
   });
   APP.agreementData = data;
 
-  // Re-match to invoices
+  // Re-match to invoices — use Qnet location name as authoritative
   APP.invoices.forEach(inv => {
     const agrNum = inv.agreementNumber.replace(/^F/i, '');
     const match = data.find(a => String(a.agreementNumber || a.id || '') === agrNum);
-    if (match) inv.matchedAgreement = match;
+    if (match) {
+      inv.matchedAgreement = match;
+      const qnetName = match.locationName || match.location || '';
+      if (qnetName) inv.location = qnetName;
+    }
   });
 
   const ah = await fetchAdditionalHours(APP.billingPeriodStart, APP.billingPeriodEnd);
@@ -1958,11 +1963,15 @@ async function startParsing() {
     APP.agreementData = agreements;
     logMsg(`Got ${agreements.length} agreement(s).`, 'log-success');
 
-    // Match agreements to invoices
+    // Match agreements to invoices — use Qnet location name as authoritative
     APP.invoices.forEach(inv => {
       const agrNum = inv.agreementNumber.replace(/^F/i, '');
       const match = agreements.find(a => String(a.agreementNumber || a.id || '') === agrNum);
-      if (match) inv.matchedAgreement = match;
+      if (match) {
+        inv.matchedAgreement = match;
+        const qnetName = match.locationName || match.location || '';
+        if (qnetName) inv.location = qnetName;
+      }
     });
 
     // Fetch additional hours (periodEnd + 1 day)
@@ -2523,15 +2532,17 @@ async function generateBundle() {
     progBar.style.width = '15%';
     progStatus.textContent = 'Loading source PDFs…';
 
-    // Load all regular PDFs
+    // Load all regular PDFs — re-read from File objects for fresh bytes
     const regularPdfDocs = [];
-    for (const rf of APP.regularFiles) {
-      const doc = await PDFDocument.load(rf.arrayBuf, { ignoreEncryption: true });
+    for (const file of APP.files.regular) {
+      const buf = await file.arrayBuffer();
+      const doc = await PDFDocument.load(new Uint8Array(buf), { ignoreEncryption: true });
       regularPdfDocs.push(doc);
     }
     const expensePdfDocs = [];
-    for (const ef of APP.expenseFiles) {
-      const doc = await PDFDocument.load(ef.arrayBuf, { ignoreEncryption: true });
+    for (const file of APP.files.expense) {
+      const buf = await file.arrayBuffer();
+      const doc = await PDFDocument.load(new Uint8Array(buf), { ignoreEncryption: true });
       expensePdfDocs.push(doc);
     }
 
@@ -2636,7 +2647,11 @@ async function addSummaryPages(mergedPdf) {
   const hv = APP.headerValues;
   const totalAmt = APP._summaryTotal || rows.filter(r => r.isFirstRow).reduce((s, r) => s + (r.grandTotal || 0), 0);
   const period = hv.billingPeriod || document.getElementById('billingPeriod').value || '';
-  const periodLabel = period ? new Date(period + '-02').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '';
+  const periodLabel = period
+    ? new Date(period + '-02').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    : 'Unknown Period';
+  // pdf-lib throws on drawText('') — every string used below must be non-empty
+  const safeText = s => (String(s || '').trim() || ' ');
 
   // Paginate rows
   const chunks = [];
@@ -2662,15 +2677,15 @@ async function addSummaryPages(mergedPdf) {
 
       // Top gray bar
       page.drawRectangle({ x: 40, y: y - 10, width: pw - 80, height: 22, color: gray });
-      page.drawText(`Invoice #: ${hv.masterInvoice || '—'}`, { x: 48, y: y - 6, size: 8, font: fontBold, color: white });
-      page.drawText(`Date: ${hv.invoiceDate || '—'}`, { x: 220, y: y - 6, size: 8, font, color: white });
-      page.drawText(`Account #: ${hv.accountNumber || 'C10463'}`, { x: 360, y: y - 6, size: 8, font, color: white });
-      page.drawText(periodLabel, { x: 560, y: y - 6, size: 9, font: fontBold, color: yellow });
+      page.drawText(safeText(`Invoice #: ${hv.masterInvoice || '—'}`), { x: 48, y: y - 6, size: 8, font: fontBold, color: white });
+      page.drawText(safeText(`Date: ${hv.invoiceDate || '—'}`), { x: 220, y: y - 6, size: 8, font, color: white });
+      page.drawText(safeText(`Account #: ${hv.accountNumber || 'C10463'}`), { x: 360, y: y - 6, size: 8, font, color: white });
+      page.drawText(safeText(periodLabel), { x: 560, y: y - 6, size: 9, font: fontBold, color: yellow });
       y -= 30;
 
       // PO
       page.drawRectangle({ x: 40, y: y - 8, width: 200, height: 18, color: gray });
-      page.drawText(`PO #: ${hv.poNumber || '0083051024'}`, { x: 48, y: y - 4, size: 8, font, color: white });
+      page.drawText(safeText(`PO #: ${hv.poNumber || '0083051024'}`), { x: 48, y: y - 4, size: 8, font, color: white });
       y -= 26;
 
       // Bill To
@@ -2683,10 +2698,10 @@ async function addSummaryPages(mergedPdf) {
       // Red total due box
       page.drawRectangle({ x: 40, y: y - 30, width: pw - 80, height: 36, color: red });
       page.drawText('TOTAL AMOUNT DUE', { x: 48, y: y - 16, size: 10, font: fontBold, color: white });
-      page.drawText(`Due: ${hv.dueDate || '—'}`, { x: 300, y: y - 16, size: 8, font, color: white });
+      page.drawText(safeText(`Due: ${hv.dueDate || '—'}`), { x: 300, y: y - 16, size: 8, font, color: white });
       // Amount box
-      page.drawRectangle({ x: 570, y: y - 28, width: 160, height: 32, color: white, borderColor: white, borderWidth: 2 });
-      page.drawText('$ ' + totalAmt.toFixed(2), { x: 578, y: y - 16, size: 11, font: fontBold, color: red });
+      page.drawRectangle({ x: 570, y: y - 28, width: 160, height: 32, color: white });
+      page.drawText(safeText('$ ' + totalAmt.toFixed(2)), { x: 578, y: y - 16, size: 11, font: fontBold, color: red });
       y -= 44;
 
       // Remit to
@@ -2694,7 +2709,7 @@ async function addSummaryPages(mergedPdf) {
       y -= 14;
 
       // Reference
-      page.drawText(`Invoice in reference to: Resident services for ${periodLabel}`, { x: 40, y, size: 8, font, color: dark });
+      page.drawText(safeText(`Invoice in reference to: Resident services for ${periodLabel}`), { x: 40, y, size: 8, font, color: dark });
       y -= 18;
 
       // Table header
@@ -2711,7 +2726,7 @@ async function addSummaryPages(mergedPdf) {
     } else {
       // Continuation pages
       let y = ph - 30;
-      page.drawText(`Bosch Invoice Bundle — ${periodLabel} (continued)`, { x: 40, y, size: 9, font: fontBold, color: dark });
+      page.drawText(safeText(`Bosch Invoice Bundle — ${periodLabel} (continued)`), { x: 40, y, size: 9, font: fontBold, color: dark });
       y -= 20;
       drawTableHeader(page, y, font, fontBold);
       y -= 16;
