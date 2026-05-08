@@ -898,9 +898,15 @@ async function callClaudeVision(base64Image, systemPrompt, retries=2) {
       // Shape 2: { output: "..." }
       // Shape 3: direct Claude JSON result
       // Shape 4: array of results [{ ... }]
+      // Shape 5: N8N batch format { success: true, results: [{ pageIndex, success, invoice: {...} }] }
       let text;
       if (result.success === false) {
         throw new Error(result.error || result.message || 'OCR request failed');
+      } else if (result.success && result.results && Array.isArray(result.results) && result.results.length > 0) {
+        const firstResult = result.results[0];
+        if (firstResult && firstResult.invoice) return firstResult.invoice;
+        if (firstResult && firstResult.success === false) throw new Error(firstResult.error || 'Page OCR failed');
+        text = JSON.stringify(firstResult);
       } else if (result.data) {
         text = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
       } else if (result.output) {
@@ -1085,17 +1091,24 @@ async function startParsing() {
       const agreementNums = [...new Set(APP.invoices.map(inv => inv.agreementNumber).filter(Boolean))];
       logMsg(`Invoice agreement numbers: ${agreementNums.length > 0 ? agreementNums.join(', ') : '(none)'}`, 'info');
       let matched = 0;
+      const availableKeys = Object.keys(APP.agreementData);
       APP.invoices.forEach(inv => {
-        const cleanNum = (inv.agreementNumber || '').replace(/^F/i, '');
+        const rawNum = inv.agreementNumber || '';
+        const cleanNum = rawNum.replace(/^F/i, '');
+        logMsg(`  ${inv.invoiceNumber || inv.id}: agreementNumber="${rawNum}" → lookup key="${cleanNum}"`, 'info');
         if (APP.agreementData[cleanNum]) {
           inv.scheduledHours = APP.agreementData[cleanNum].scheduledHours;
           inv.contractHoursWeekly = parseFloat(APP.agreementData[cleanNum].contractHours) || 0;
           const qnetName = APP.agreementData[cleanNum].locationName;
           if (qnetName && qnetName !== inv.location) {
-            logMsg(`  ${inv.invoiceNumber || inv.id}: location "${inv.location}" → "${qnetName}"`, 'info');
+            logMsg(`    → location "${inv.location}" updated to Qnet name "${qnetName}"`, 'info');
             inv.location = qnetName;
+          } else {
+            logMsg(`    → matched agreement, location stays "${inv.location}"`, 'info');
           }
           matched++;
+        } else {
+          logMsg(`    → NO MATCH in ${availableKeys.length} agreements (sample keys: ${availableKeys.slice(0,5).join(', ')})`, 'error');
         }
       });
       logMsg(`Matched ${matched}/${APP.invoices.length} invoices to agreement data.`, 'success');
