@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.3.3 | 2026-05-08 | Fix changelog hook loop — skip reminder when commit message contains "PROJECT_LOG". | `ec80412` |
 | v2.3.2 | 2026-05-08 | PROJECT_LOG self-update: add v2.3.1 row. | `f42739f` |
 | v2.3.1 | 2026-05-08 | PROJECT_LOG self-update: add v2.3.0 row. | `735c8ee` |
 | v2.3.0 | 2026-05-08 | Fix Bosch location matching (Qnet canonical name after agreement match), PDF grand total always drawn on first row, app changelog bumped to 2.3.0. | `8e85f77` |
