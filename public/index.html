@@ -356,6 +356,45 @@
   @media(max-width:800px){
     #tabBosch .bosch-upload-grid{grid-template-columns:1fr}
   }
+
+  /* ── BOSCH-STYLE POLISH FOR MONTHEND & RECON ────────────────────────── */
+  #tabMonthEnd .tqs-content,#tabRecon .tqs-content{background:var(--tqs-content-bg)}
+  #tabMonthEnd .wrap,#tabRecon .wrap{max-width:none;margin:0;padding:24px 32px}
+  #tabMonthEnd .card,#tabRecon .card{background:#fff;border:1px solid var(--tqs-card-border);border-radius:8px;box-shadow:0 1px 3px rgba(33,35,34,.08);margin-bottom:20px;overflow:visible}
+  #tabMonthEnd .ch,#tabRecon .ch{background:#fff;border-bottom:1px solid var(--tqs-card-border);padding:18px 24px 14px;gap:10px;display:flex;align-items:center}
+  #tabMonthEnd .cn,#tabRecon .cn{background:var(--qnet-yellow);color:var(--tqs-chrome);width:26px;height:26px;font-size:12px;font-weight:700;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  #tabMonthEnd .ct,#tabRecon .ct{font-size:15px;font-weight:600;color:var(--tqs-chrome)}
+  #tabMonthEnd .cd,#tabRecon .cd{color:var(--tqs-chrome-muted);font-size:12px;margin-left:auto}
+  #tabMonthEnd .cb,#tabRecon .cb{padding:20px 24px 22px}
+  #tabMonthEnd .ds,#tabRecon .ds{background:#f8fafc;border:1px solid var(--tqs-card-border);border-radius:8px;padding:16px 18px}
+  #tabMonthEnd .dst,#tabRecon .dst{font-size:11px;font-weight:600;color:var(--tqs-chrome-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+  #tabMonthEnd .cb label,#tabRecon .cb label{font-size:11px;font-weight:600;color:var(--tqs-chrome-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+  #tabMonthEnd input[type=date],#tabMonthEnd input[type=number],#tabRecon input[type=date],#tabRecon input[type=number]{padding:8px 12px;border-radius:6px;border:1px solid var(--tqs-card-border);font-size:14px;font-family:inherit;color:var(--tqs-chrome);background:#fff;width:100%;outline:none}
+  #tabMonthEnd input[type=date]:focus,#tabMonthEnd input[type=number]:focus,#tabRecon input[type=date]:focus,#tabRecon input[type=number]:focus{border-color:var(--tqs-chrome);box-shadow:0 0 0 3px rgba(59,130,246,.1)}
+  #tabMonthEnd .btn,#tabRecon .btn{padding:8px 16px;font-size:13px;border-radius:6px;background:var(--qnet-yellow);color:var(--tqs-chrome);font-weight:600;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background .15s,opacity .15s}
+  #tabMonthEnd .btn:hover:not(:disabled),#tabRecon .btn:hover:not(:disabled){background:var(--qnet-yellow-hover)}
+  #tabMonthEnd .btn:disabled,#tabRecon .btn:disabled{background:#cbd5e1;color:#64748b;cursor:not-allowed;opacity:1}
+  #tabMonthEnd .btn-s,#tabRecon .btn-s{background:#fff;color:var(--tqs-chrome);border:1px solid var(--tqs-card-border);font-weight:500;padding:8px 16px;font-size:13px}
+  #tabMonthEnd .btn-s:hover,#tabRecon .btn-s:hover{background:#f1f5f9}
+  #tabMonthEnd .btn-g,#tabRecon .btn-g{background:#10b981;color:#fff;font-weight:600}
+  #tabMonthEnd .btn-g:hover,#tabRecon .btn-g:hover{background:#059669}
+  #tabMonthEnd .btn-b,#tabRecon .btn-b{background:#fff;color:var(--tqs-chrome);border:1px solid var(--tqs-card-border);font-weight:500;padding:8px 16px;font-size:13px}
+  #tabMonthEnd .btn-b:hover,#tabRecon .btn-b:hover{background:#f1f5f9}
+  #tabMonthEnd .us,#tabRecon .us{border:2px dashed var(--tqs-card-border);border-radius:8px;padding:28px 20px;min-height:110px;background:#fff;text-align:center;cursor:pointer;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;transition:border-color .15s,background .15s}
+  #tabMonthEnd .us:hover,#tabRecon .us:hover,#tabMonthEnd .us.dov,#tabRecon .us.dov{border-color:var(--qnet-yellow);background:#fffde6}
+  #tabMonthEnd .us.ld,#tabRecon .us.ld{border-color:#10b981;border-style:solid;background:#ecfdf5}
+  #tabMonthEnd .sl,#tabRecon .sl{color:var(--tqs-chrome-muted);font-family:inherit;font-weight:600;letter-spacing:.5px;font-size:11px;text-transform:uppercase}
+  #tabMonthEnd .sok,#tabRecon .sok{color:#10b981;font-weight:600}
+  #tabMonthEnd .sno,#tabRecon .sno{color:var(--tqs-chrome-muted);font-size:12px}
+  #tabMonthEnd .si,#tabRecon .si{font-size:22px;margin-bottom:2px}
+  #tabMonthEnd .hint,#tabRecon .hint{font-size:11px;color:var(--tqs-chrome-muted);margin-top:3px;font-style:normal}
+  #tabMonthEnd .pb-w,#tabRecon .pb-w{height:8px;background:#e2e8f0;border-radius:4px;margin-top:12px}
+  #tabMonthEnd .pb-f,#tabRecon .pb-f{background:var(--qnet-yellow);border-radius:4px}
+  #tabMonthEnd .sp-cfg,#tabRecon .sp-cfg{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px}
+  #tabMonthEnd .sp-cfg-t,#tabRecon .sp-cfg-t{color:#1e40af;font-weight:600;font-size:13px;margin-bottom:6px}
+  #tabMonthEnd .em-i,#tabRecon .em-i{background:#f8fafc;border:1px solid var(--tqs-card-border);border-radius:6px;padding:8px 10px}
+  #tabMonthEnd .recon-empty,#tabRecon .recon-empty{background:#fff;border:2px dashed var(--tqs-card-border);border-radius:8px;padding:32px 20px;color:var(--tqs-chrome-muted)}
+  #tabMonthEnd .recon-empty b,#tabRecon .recon-empty b{color:var(--tqs-chrome)}
 </style>
 </head>
 <body>
